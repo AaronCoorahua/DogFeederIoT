@@ -2,205 +2,245 @@
 #include <ESP32Servo.h>
 
 // ======================================================
-// WIFI + API  (NUEVO)
-//   WiFi.h, HTTPClient.h y WiFiClientSecure.h YA VIENEN
-//   con el paquete de placas ESP32. No instalas nada nuevo.
+// WIFI + API  (WiFi.h, HTTPClient.h y WiFiClientSecure.h
+// YA VIENEN con el paquete de placas ESP32. No instalas nada.)
 // ======================================================
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 
-// ---- Credenciales de tu red WiFi ----
-const char* WIFI_SSID     = "TU_WIFI";
-const char* WIFI_PASSWORD = "TU_PASSWORD";
+// ---- Credenciales WiFi ----
+const char* WIFI_SSID     = "****";
+const char* WIFI_PASSWORD = "****";
 
-// ---- URL de tu API en Next.js (en la nube) ----
-// Ejemplo en producción: https://dogfeeder.vercel.app/api/eventos
-// Para pruebas en tu PC local usa: http://192.168.x.x:3000/api/eventos
-const char* API_URL = "https://TU-APP.vercel.app/api/eventos";
+// ---- URL base de la app (SIN barra final, SIN ruta) ----
+// Produccion (la nube): https://.vercel.app
+// Pruebas en tu PC:      http://192.168.x.x:3000   (detecta http/https solo)
+const char* API_BASE = "*****";
 
-// ---- Clave compartida (debe ser igual a DEVICE_API_KEY en Next.js) ----
-const char* API_KEY = "123456789";
+// ---- Clave compartida (igual a DEVICE_API_KEY en Next.js) ----
+const char* API_KEY = "*****";
 
 // ======================================================
-// SERVO
+// PINES
 // ======================================================
-Servo compuerta;
-
 const int servoPin = 18;
-
 const int ANGULO_CERRADO = 0;
 const int ANGULO_ABIERTO = 90;
 
-// ======================================================
-// HX711
-// ======================================================
 const int HX711_dout = 4;
 const int HX711_sck  = 5;
 
-HX711_ADC LoadCell(HX711_dout, HX711_sck);
-
-// Factor obtenido en la calibración
-float calibrationValue = -395.39;
-
-// ======================================================
-// HC-SR04
-// ======================================================
 const int TRIG_PIN = 27;
 const int ECHO_PIN = 26;
 
 // ======================================================
-// CONFIGURACIÓN
+// PARAMETROS
 // ======================================================
-const float DISTANCIA_ACTIVACION = 20.0; // cm
-float PESO_OBJETIVO = 250.0;             // gramos
+const float DISTANCIA_PERRO = 20.0;             // cm: a esta distancia "el perro esta cerca"
+float pesoObjetivo = 250.0;                     // g por racion (el server lo confirma)
+const unsigned long HEARTBEAT_MS = 1500;        // cada cuanto reporta al server
+const unsigned long TIMEOUT_ALIMENTAR_MS = 20000; // seguridad: corta a los 20s
 
-bool dispensando = false;
+// ======================================================
+// OBJETOS / ESTADO
+// ======================================================
+Servo compuerta;
+HX711_ADC LoadCell(HX711_dout, HX711_sck);
+float calibrationValue = -395.39;
+
+bool alimentando = false;
+unsigned long ultimoHeartbeat = 0;
 
 // ======================================================
 // SETUP
 // ======================================================
 void setup() {
-
   Serial.begin(115200);
   delay(1000);
 
-  // WiFi (NUEVO)
   conectarWiFi();
 
-  // Servo
   compuerta.attach(servoPin);
   compuerta.write(ANGULO_CERRADO);
 
-  // Ultrasonico
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
 
-  // HX711
   LoadCell.begin();
-
-  unsigned long stabilizingtime = 2000;
-  bool tare = true;
-
-  LoadCell.start(stabilizingtime, tare);
-
+  LoadCell.start(2000, true); // estabiliza 2s y hace tare
   if (LoadCell.getTareTimeoutFlag()) {
     Serial.println("Error HX711");
     while (1);
   }
-
   LoadCell.setCalFactor(calibrationValue);
 
   Serial.println("=================================");
   Serial.println("DISPENSADOR LISTO");
-  Serial.println("Esperando mascota...");
+  Serial.println("Reportando estado a la app...");
   Serial.println("=================================");
 }
 
 // ======================================================
 // LOOP
+//   Solo mide y reporta. NO abre solo: espera el comando
+//   "alimentar" que el usuario envia desde la app.
 // ======================================================
 void loop() {
-
   LoadCell.update();
 
   float distancia = medirDistancia();
-  float peso      = LoadCell.getData();
-  float pesoReal  = peso * (-1);   // valor positivo real en gramos
+  float pesoReal  = LoadCell.getData() * (-1);
+  bool  perroCerca = (distancia > 0 && distancia <= DISTANCIA_PERRO);
 
-  Serial.print("Distancia: ");
-  Serial.print(distancia);
-  Serial.print(" cm   ");
+  if (millis() - ultimoHeartbeat >= HEARTBEAT_MS) {
+    ultimoHeartbeat = millis();
 
-  Serial.print("Peso: ");
-  Serial.print(pesoReal);
-  Serial.println(" g");
-
-  // --------------------------------------------------
-  // Detectar mascota
-  // --------------------------------------------------
-  if (!dispensando &&
-      distancia > 0 &&
-      distancia <= DISTANCIA_ACTIVACION) {
-
-    Serial.println("Mascota detectada");
-    Serial.println("Abriendo compuerta");
-
-    // Reiniciar peso a cero
-    LoadCell.tare();
-
-    // Abrir compuerta
-    compuerta.write(ANGULO_ABIERTO);
-
-    dispensando = true;
-
-    // NUEVO: avisar a la app que se ABRIO
-    enviarEvento("abierto", pesoReal, distancia);
-
-    delay(500);
-  }
-
-  // --------------------------------------------------
-  // Dispensar comida
-  // --------------------------------------------------
-  if (dispensando) {
-
-    if (pesoReal >= PESO_OBJETIVO) {
-
-      Serial.println("Peso objetivo alcanzado");
-
-      // Cerrar compuerta
-      compuerta.write(ANGULO_CERRADO);
-
-      Serial.println("Compuerta cerrada");
-
-      dispensando = false;
-
-      // NUEVO: avisar a la app que se CERRO
-      enviarEvento("cerrado", pesoReal, distancia);
-
-      delay(2000);
-
-      Serial.println("Esperando que la mascota se retire...");
-
-      while (medirDistancia() <= DISTANCIA_ACTIVACION) {
-        delay(100);
+    String resp = enviarHeartbeat(perroCerca, pesoReal, distancia);
+    if (resp.length() > 0) {
+      actualizarObjetivo(resp);
+      // Si la app pidio alimentar, lo hacemos.
+      if (!alimentando && resp.indexOf("\"alimentar\":true") >= 0) {
+        alimentar();
       }
-
-      Serial.println("Mascota retirada");
-      Serial.println("Sistema listo nuevamente");
     }
   }
 
-  delay(100);
+  delay(50);
+}
+
+// ======================================================
+// ALIMENTAR: abre, dispensa hasta el peso, cierra y reporta
+// ======================================================
+void alimentar() {
+  Serial.println("Comando ALIMENTAR -> abriendo compuerta");
+  alimentando = true;
+
+  LoadCell.update();
+  LoadCell.tare();        // pone el peso en cero antes de servir
+  delay(300);
+  compuerta.write(ANGULO_ABIERTO);
+
+  unsigned long inicio = millis();
+  unsigned long ultimoAviso = 0;
+  float pesoReal = 0;
+
+  while (true) {
+    LoadCell.update();
+    pesoReal = LoadCell.getData() * (-1);
+
+    if (pesoReal >= pesoObjetivo) break;                       // listo
+    if (millis() - inicio > TIMEOUT_ALIMENTAR_MS) {            // seguridad
+      Serial.println("Timeout de seguridad al alimentar");
+      break;
+    }
+
+    // Avisa el peso en vivo (~cada 600ms) para que la app muestre el progreso.
+    if (millis() - ultimoAviso > 600) {
+      ultimoAviso = millis();
+      enviarHeartbeat(true, pesoReal, 0);
+    }
+    delay(40);
+  }
+
+  compuerta.write(ANGULO_CERRADO);
+  Serial.print("Servido: ");
+  Serial.print(pesoReal);
+  Serial.println(" g  -> compuerta cerrada");
+
+  // Reporta cuanto sirvio.
+  String payload = String("{\"gramos\":") + String(pesoReal, 1) + "}";
+  postJson("/api/dispositivo/resultado", payload);
+
+  ultimoHeartbeat = millis();
+  alimentando = false;
+}
+
+// ======================================================
+// HEARTBEAT: reporta estado y devuelve la respuesta del server
+// ======================================================
+String enviarHeartbeat(bool perroCerca, float peso, float distancia) {
+  String payload = String("{\"perroCerca\":") + (perroCerca ? "true" : "false") +
+                   ",\"peso\":" + String(peso, 1) +
+                   ",\"distancia\":" + String(distancia, 1) + "}";
+  return postJson("/api/dispositivo/heartbeat", payload);
+}
+
+// Extrae "pesoObjetivo" de la respuesta del server (sin libreria JSON).
+void actualizarObjetivo(const String& resp) {
+  int i = resp.indexOf("\"pesoObjetivo\":");
+  if (i >= 0) {
+    float v = resp.substring(i + 15).toFloat();
+    if (v > 0) pesoObjetivo = v;
+  }
+}
+
+// ======================================================
+// POST JSON  (detecta http/https segun API_BASE)
+//   Devuelve el cuerpo de la respuesta ("" si falla).
+// ======================================================
+String postJson(const char* ruta, const String& payload) {
+  // Reconecta WiFi si hace falta
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.reconnect();
+    unsigned long t = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - t < 4000) delay(150);
+    if (WiFi.status() != WL_CONNECTED) return "";
+  }
+
+  String url = String(API_BASE) + ruta;
+  String respuesta = "";
+  HTTPClient http;
+  http.setConnectTimeout(5000);
+  http.setTimeout(5000);
+
+  bool iniciado = false;
+  WiFiClientSecure clientS;
+  WiFiClient clientP;
+
+  if (url.startsWith("https")) {
+    clientS.setInsecure(); // no valida certificado (suficiente para el proyecto)
+    iniciado = http.begin(clientS, url);
+  } else {
+    iniciado = http.begin(clientP, url);
+  }
+
+  if (iniciado) {
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("x-api-key", API_KEY);
+    int code = http.POST(payload);
+    if (code > 0) {
+      respuesta = http.getString();
+    } else {
+      Serial.print("Error HTTP en ");
+      Serial.print(ruta);
+      Serial.print(": ");
+      Serial.println(HTTPClient::errorToString(code));
+    }
+    http.end();
+  }
+
+  return respuesta;
 }
 
 // ======================================================
 // MEDIR DISTANCIA HC-SR04
 // ======================================================
 float medirDistancia() {
-
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
-
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
-
   digitalWrite(TRIG_PIN, LOW);
 
   long duracion = pulseIn(ECHO_PIN, HIGH, 30000);
+  if (duracion == 0) return 999;
 
-  if (duracion == 0) {
-    return 999;
-  }
-
-  float distancia = duracion * 0.0343 / 2.0;
-
-  return distancia;
+  return duracion * 0.0343 / 2.0;
 }
 
 // ======================================================
-// CONECTAR A WIFI  (NUEVO)
+// CONECTAR A WIFI
 // ======================================================
 void conectarWiFi() {
   WiFi.mode(WIFI_STA);
@@ -208,8 +248,6 @@ void conectarWiFi() {
 
   Serial.print("Conectando a WiFi");
   unsigned long inicio = millis();
-
-  // Intenta conectar hasta 15 segundos
   while (WiFi.status() != WL_CONNECTED && millis() - inicio < 15000) {
     delay(500);
     Serial.print(".");
@@ -221,61 +259,6 @@ void conectarWiFi() {
     Serial.println(WiFi.localIP());
   } else {
     Serial.println();
-    Serial.println("No se pudo conectar a WiFi.");
-    Serial.println("El dispensador seguira funcionando sin enviar datos.");
+    Serial.println("No se pudo conectar a WiFi (seguira intentando al reportar).");
   }
-}
-
-// ======================================================
-// ENVIAR EVENTO A LA API  (NUEVO)
-//   tipo: "abierto" o "cerrado"
-// ======================================================
-void enviarEvento(const char* tipo, float peso, float distancia) {
-
-  // Si se cayo el WiFi, intenta reconectar brevemente
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi desconectado, reintentando...");
-    WiFi.reconnect();
-    unsigned long inicio = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - inicio < 5000) {
-      delay(200);
-    }
-    if (WiFi.status() != WL_CONNECTED) {
-      Serial.println("Sin WiFi. Evento no enviado.");
-      return;
-    }
-  }
-
-  // Cliente seguro para HTTPS (la nube usa https).
-  // setInsecure() = no valida el certificado (suficiente para el proyecto).
-  // Si pruebas en local con http://, cambia por:  WiFiClient client;  (sin setInsecure)
-  WiFiClientSecure client;
-  client.setInsecure();
-
-  HTTPClient http;
-  http.setConnectTimeout(5000);
-  http.setTimeout(5000);
-
-  http.begin(client, API_URL);
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("x-api-key", API_KEY);
-
-  // Armamos el JSON a mano (no hace falta libreria extra)
-  String payload = String("{\"tipo\":\"") + tipo +
-                   "\",\"peso\":" + String(peso, 1) +
-                   ",\"distancia\":" + String(distancia, 1) + "}";
-
-  int code = http.POST(payload);
-
-  if (code > 0) {
-    Serial.print("Evento '");
-    Serial.print(tipo);
-    Serial.print("' enviado. HTTP ");
-    Serial.println(code);
-  } else {
-    Serial.print("Error al enviar evento: ");
-    Serial.println(HTTPClient::errorToString(code));
-  }
-
-  http.end();
 }

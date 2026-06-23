@@ -1,62 +1,81 @@
 # 🐶 DogFeeder
 
-App Next.js que recibe los eventos del dispensador (ESP32) y muestra en tiempo
-real cuándo se **abre** y se **cierra** la compuerta, con el peso de comida.
+Dashboard móvil para un dispensador inteligente de comida. Hecho con
+**Next.js + shadcn/ui** (tema azul, modo oscuro). Muestra el estado del
+dispositivo, métricas y un botón grande para **alimentar**.
 
-## Cómo funciona
+## Flujo
 
 ```
-ESP32  ──POST /api/eventos──►  Next.js (API)  ──guarda──►  store en memoria
-                                                                │
-Navegador  ──GET /api/eventos (cada 2 s)──────────────────────►┘
+ESP32  ──heartbeat (perroCerca, peso, distancia) cada 1.5s──►  /api/dispositivo/heartbeat
+       ◄──── { alimentar, pesoObjetivo } ───────────────────────┘
+
+Usuario pulsa "Alimentar"  ──►  /api/alimentar  (deja comando pendiente)
+ESP32 (en su heartbeat) recibe alimentar=true  ──►  abre, sirve hasta el peso, cierra
+ESP32  ──► /api/dispositivo/resultado { gramos }  ──►  "Sirvió X g"  ──(5s)──►  listo
+
+Navegador  ──GET /api/estado (cada 1.5s)──►  pinta el dashboard
 ```
 
-- `app/api/eventos/route.ts` → recibe (POST) del ESP32 y entrega (GET) a la web.
-- `lib/store.ts` → guarda los eventos.
-- `app/page.tsx` → interfaz que hace polling cada 2 segundos.
+Sin hardware conectado, al pulsar "Alimentar" la app **simula** la ración a
+los ~3 s (modo demo) para poder mostrarla sin el ESP32.
+
+## Pantallas
+
+- **/login** — acceso (demo: cualquier correo/contraseña).
+- **/** — dashboard: tarjeta de alimentación, métricas, estado de componentes
+  (operativo / revisar / desconectado) y actividad reciente.
 
 ## Correr en local
 
 ```bash
 cd dogfeeder
 npm install
-npm run dev
+npm run dev        # http://localhost:3000
 ```
 
-Abre http://localhost:3000
-
-### Probar la API sin el ESP32 (simular un evento)
-
-```bash
-curl -X POST http://localhost:3000/api/eventos ^
-  -H "Content-Type: application/json" ^
-  -H "x-api-key: cambia-esta-clave" ^
-  -d "{\"tipo\":\"abierto\",\"peso\":0,\"distancia\":15}"
-```
-
-(En PowerShell usa `Invoke-RestMethod`; en Git Bash usa `\` en vez de `^`.)
-
-## Variables de entorno
-
-Copia `.env.example` a `.env.local` y define la clave:
+Crea `dogfeeder/.env.local` con la clave (igual al `API_KEY` del Arduino):
 
 ```
-DEVICE_API_KEY=una-clave-secreta
+DEVICE_API_KEY=123456789
 ```
 
-Esa clave **debe ser igual** al `API_KEY` del código Arduino.
+### Probar sin ESP32 (simular el dispositivo)
 
-## Subir a la nube (Vercel)
+```powershell
+$h = @{ "x-api-key"="123456789"; "Content-Type"="application/json" }
+# Reporta estado "perro cerca":
+Invoke-RestMethod http://localhost:3000/api/dispositivo/heartbeat -Method Post -Headers $h -Body '{"perroCerca":true,"peso":0,"distancia":12}'
+# Reporta una ración servida:
+Invoke-RestMethod http://localhost:3000/api/dispositivo/resultado -Method Post -Headers $h -Body '{"gramos":248}'
+```
 
-1. Sube esta carpeta a GitHub.
-2. En vercel.com → New Project → importa el repo.
-3. En **Settings → Environment Variables** agrega `DEVICE_API_KEY`.
-4. Deploy. Tu URL será algo como `https://dogfeeder.vercel.app`.
-5. En el Arduino pon: `API_URL = "https://dogfeeder.vercel.app/api/eventos"`.
+## API
 
-> ⚠️ **Importante sobre el almacenamiento.** El store es *en memoria*. En Vercel
-> (serverless) la memoria se reinicia entre peticiones, así que el historial
-> puede "perderse". Para local o para un host de proceso único (Render, Railway)
-> funciona bien. Para producción seria, cambia `lib/store.ts` por una base de
-> datos (Vercel Postgres, Upstash Redis, Supabase...). La interfaz de funciones
-> queda igual, solo cambia el "cómo se guarda".
+| Método | Ruta | Quién | Para qué |
+|---|---|---|---|
+| POST | `/api/dispositivo/heartbeat` | ESP32 (x-api-key) | reporta estado y recibe si debe alimentar |
+| POST | `/api/dispositivo/resultado` | ESP32 (x-api-key) | informa los gramos servidos |
+| POST | `/api/alimentar` | web | el usuario pide alimentar |
+| GET  | `/api/estado` | web | estado + métricas para el dashboard |
+
+## Desplegar en Vercel
+
+1. Sube el repo a GitHub e impórtalo en vercel.com.
+2. **Settings → Environment Variables**: agrega `DEVICE_API_KEY = 123456789`
+   (sin esto, el ESP32 recibe 401).
+3. En el Arduino, `API_BASE` ya apunta a tu dominio de Vercel.
+
+> ⚠️ **Almacenamiento.** El estado vive **en memoria** (`lib/store.ts`). En
+> Vercel *serverless* la memoria no se comparte entre invocaciones, así que el
+> flujo con estado (comando pendiente, historial) puede comportarse de forma
+> intermitente. Para que funcione 100% en la nube, migra el store a una base de
+> datos compartida (Upstash Redis o Vercel KV/Postgres). La interfaz de
+> `lib/store.ts` no cambiaría, solo el "cómo se guarda".
+
+## Stack
+
+- Next.js (App Router) + TypeScript
+- Tailwind CSS v4 + shadcn/ui (tema azul)
+- lucide-react (iconos)
+- Sesión de demo con cookie (server components, sin middleware)
