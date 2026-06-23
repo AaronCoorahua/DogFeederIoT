@@ -11,33 +11,45 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-export function LoginForm() {
+export function RegisterForm() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
 
-  async function entrar(e: React.FormEvent) {
+  async function registrar(e: React.FormEvent) {
     e.preventDefault();
-    if (!email || !pass) return;
+    if (!email || pass.length < 6) {
+      setError("La contraseña debe tener al menos 6 caracteres.");
+      return;
+    }
     setCargando(true);
     setError(null);
 
     const supabase = createClient();
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password: pass,
     });
 
     if (error) {
-      setError("Correo o contraseña incorrectos.");
+      setError(
+        error.message.includes("already")
+          ? "Ese correo ya está registrado."
+          : "No se pudo crear la cuenta."
+      );
       setCargando(false);
       return;
     }
 
-    router.replace("/");
-    router.refresh();
+    // Acceso inmediato (sin verificar correo): hay sesion -> al onboarding.
+    if (data.session) {
+      router.replace("/");
+      router.refresh();
+    } else {
+      router.replace("/login");
+    }
   }
 
   return (
@@ -54,10 +66,10 @@ export function LoginForm() {
 
         <Card className="border-border/60 bg-card/80 backdrop-blur">
           <CardHeader>
-            <CardTitle className="text-lg">Iniciar sesión</CardTitle>
+            <CardTitle className="text-lg">Crear cuenta</CardTitle>
           </CardHeader>
           <CardContent>
-            <form onSubmit={entrar} className="flex flex-col gap-4">
+            <form onSubmit={registrar} className="flex flex-col gap-4">
               <div className="flex flex-col gap-2">
                 <Label htmlFor="email">Correo</Label>
                 <div className="relative">
@@ -82,8 +94,8 @@ export function LoginForm() {
                   <Input
                     id="pass"
                     type="password"
-                    autoComplete="current-password"
-                    placeholder="••••••••"
+                    autoComplete="new-password"
+                    placeholder="Mínimo 6 caracteres"
                     className="pl-9"
                     value={pass}
                     onChange={(e) => setPass(e.target.value)}
@@ -107,7 +119,7 @@ export function LoginForm() {
                   <Loader2 className="animate-spin" />
                 ) : (
                   <>
-                    Entrar
+                    Crear cuenta
                     <ArrowRight />
                   </>
                 )}
@@ -117,12 +129,12 @@ export function LoginForm() {
         </Card>
 
         <p className="mt-6 text-center text-sm text-muted-foreground">
-          ¿No tienes cuenta?{" "}
+          ¿Ya tienes cuenta?{" "}
           <Link
-            href="/register"
+            href="/login"
             className="font-medium text-foreground underline underline-offset-4"
           >
-            Regístrate
+            Inicia sesión
           </Link>
         </p>
       </div>

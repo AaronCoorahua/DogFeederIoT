@@ -50,6 +50,7 @@ HX711_ADC LoadCell(HX711_dout, HX711_sck);
 float calibrationValue = -395.39;
 
 bool alimentando = false;
+bool servoManualAbierto = false; // compuerta abierta por "Servir (forzar)"
 unsigned long ultimoHeartbeat = 0;
 
 // ======================================================
@@ -99,8 +100,16 @@ void loop() {
     String resp = enviarHeartbeat(perroCerca, pesoReal, distancia);
     if (resp.length() > 0) {
       actualizarObjetivo(resp);
-      // Si la app pidio alimentar, lo hacemos.
-      if (!alimentando && resp.indexOf("\"alimentar\":true") >= 0) {
+
+      // Servo manual (boton "Servir (forzar)" / "Cerrar"). Tiene prioridad.
+      if (!alimentando && !servoManualAbierto && resp.indexOf("\"abrir\":true") >= 0) {
+        abrirManual();
+      } else if (servoManualAbierto && resp.indexOf("\"cerrar\":true") >= 0) {
+        cerrarManual();
+      }
+      // Alimentacion por peso (horario o "Alimentar ahora").
+      else if (!alimentando && !servoManualAbierto &&
+               resp.indexOf("\"alimentar\":true") >= 0) {
         alimentar();
       }
     }
@@ -154,6 +163,35 @@ void alimentar() {
 
   ultimoHeartbeat = millis();
   alimentando = false;
+}
+
+// ======================================================
+// SERVO MANUAL: abrir y mantener / cerrar bajo demanda
+//   No bloquea: la compuerta queda abierta y el loop sigue
+//   reportando el peso en vivo hasta que llegue "cerrar".
+// ======================================================
+void abrirManual() {
+  Serial.println("Comando ABRIR (manual) -> compuerta abierta");
+  servoManualAbierto = true;
+  LoadCell.update();
+  LoadCell.tare(); // cuenta desde cero lo que se sirva manualmente
+  delay(200);
+  compuerta.write(ANGULO_ABIERTO);
+}
+
+void cerrarManual() {
+  LoadCell.update();
+  float pesoReal = LoadCell.getData() * (-1);
+  compuerta.write(ANGULO_CERRADO);
+  servoManualAbierto = false;
+
+  Serial.print("Cierre manual. Servido: ");
+  Serial.print(pesoReal);
+  Serial.println(" g  -> compuerta cerrada");
+
+  String payload = String("{\"gramos\":") + String(pesoReal, 1) + "}";
+  postJson("/api/dispositivo/resultado", payload);
+  ultimoHeartbeat = millis();
 }
 
 // ======================================================

@@ -1,10 +1,9 @@
 import { redirect } from "next/navigation";
 
 import { getSessionUser } from "@/lib/auth";
-import { Dashboard } from "@/components/dashboard";
+import { AjustesView } from "@/components/ajustes-view";
 
-// Control de sesion + gate de onboarding (server component).
-export default async function Page() {
+export default async function AjustesPage() {
   const { supabase, user } = await getSessionUser();
   if (!user) redirect("/login");
 
@@ -17,5 +16,5 @@ export default async function Page() {
 
   if (!dogs || dogs.length === 0) redirect("/onboarding");
 
-  return <Dashboard />;
+  return <AjustesView />;
 }

@@ -17,8 +17,15 @@ export function FeedCard({
   enviando: boolean;
   onAlimentar: () => void;
 }) {
-  const { fase, perroCerca, peso, pesoObjetivo, ultimaCantidad, online } =
-    estado;
+  const {
+    fase,
+    perroCerca,
+    peso,
+    pesoObjetivo,
+    ultimaCantidad,
+    online,
+    servoAbierto,
+  } = estado;
 
   const pct =
     pesoObjetivo > 0 ? Math.min(100, (peso / pesoObjetivo) * 100) : 0;
@@ -75,13 +82,19 @@ export function FeedCard({
             <div className="flex items-center justify-between text-sm font-medium">
               <span className="flex items-center gap-2 text-primary">
                 <Loader2 className="size-4 animate-spin" />
-                Alimentando…
+                {servoAbierto ? "Compuerta abierta" : "Alimentando…"}
               </span>
               <span className="tabular-nums text-muted-foreground">
-                {online ? `${Math.round(peso)} / ${pesoObjetivo} g` : "Sirviendo"}
+                {servoAbierto
+                  ? online
+                    ? `${Math.round(peso)} g`
+                    : "Modo manual"
+                  : online
+                  ? `${Math.round(peso)} / ${pesoObjetivo} g`
+                  : "Sirviendo"}
               </span>
             </div>
-            <Progress value={!online ? null : pct} />
+            <Progress value={servoAbierto || !online ? null : pct} />
           </div>
         )}
 

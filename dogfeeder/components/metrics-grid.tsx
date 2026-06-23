@@ -1,7 +1,14 @@
-import { Scale, Bone, UtensilsCrossed, Container, type LucideIcon } from "lucide-react";
+import {
+  Bone,
+  UtensilsCrossed,
+  Container,
+  Target,
+  type LucideIcon,
+} from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { FoodChart, WeightChart } from "@/components/charts";
 import type { EstadoPublico } from "@/lib/types";
 
 function Metric({
@@ -41,73 +48,40 @@ function Metric({
 }
 
 export function MetricsGrid({ estado }: { estado: EstadoPublico }) {
-  const { metrics } = estado;
-  const maxBarra = Math.max(...metrics.ultimos7.map((d) => d.gramos), 1);
+  const { metrics, adherencia, pesoSerie } = estado;
 
   return (
     <div className="flex flex-col gap-3">
       <div className="grid grid-cols-2 gap-3">
-        <Metric
-          Icon={Scale}
-          label="Peso actual"
-          value={Math.round(metrics.pesoActual)}
-          sufijo="g"
-        />
-        <Metric
-          Icon={Bone}
-          label="Servido hoy"
-          value={metrics.gramosHoy}
-          sufijo="g"
-        />
-        <Metric
-          Icon={UtensilsCrossed}
-          label="Raciones hoy"
-          value={metrics.vecesHoy}
-        />
-        <Metric
-          Icon={Container}
-          label="Nivel de tolva"
-          value={metrics.nivelTolva}
-          sufijo="%"
-        >
+        <Metric Icon={Bone} label="Servido hoy" value={metrics.gramosHoy} sufijo="g" />
+        <Metric Icon={UtensilsCrossed} label="Raciones hoy" value={metrics.vecesHoy} />
+        <Metric Icon={Target} label="Adherencia" value={adherencia.pct} sufijo="%">
+          <Progress value={Math.min(100, adherencia.pct)} className="mt-1" />
+        </Metric>
+        <Metric Icon={Container} label="Tolva" value={metrics.nivelTolva} sufijo="%">
           <Progress value={metrics.nivelTolva} className="mt-1" />
         </Metric>
       </div>
 
-      {/* Mini-grafico de los ultimos 7 dias (barras con puro CSS) */}
       <Card>
         <CardContent className="p-4">
-          <p className="mb-3 text-xs font-medium text-muted-foreground">
-            Últimos 7 días
+          <p className="mb-2 text-xs font-medium text-muted-foreground">
+            Comida · últimos 7 días
           </p>
-          <div className="flex h-24 items-end justify-between gap-2">
-            {metrics.ultimos7.map((d, i) => {
-              const altura = (d.gramos / maxBarra) * 100;
-              const esHoy = i === metrics.ultimos7.length - 1;
-              return (
-                <div
-                  key={d.dia}
-                  className="flex flex-1 flex-col items-center gap-1.5"
-                >
-                  <div className="flex h-full w-full items-end">
-                    <div
-                      className={
-                        "w-full rounded-t-md transition-all " +
-                        (esHoy ? "bg-primary" : "bg-primary/35")
-                      }
-                      style={{ height: `${Math.max(altura, 4)}%` }}
-                      title={`${d.gramos} g`}
-                    />
-                  </div>
-                  <span className="text-[10px] text-muted-foreground">
-                    {d.dia}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
+          <FoodChart data={metrics.ultimos7} />
         </CardContent>
       </Card>
+
+      {pesoSerie.length > 1 && (
+        <Card>
+          <CardContent className="p-4">
+            <p className="mb-2 text-xs font-medium text-muted-foreground">
+              Peso (kg)
+            </p>
+            <WeightChart data={pesoSerie} />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

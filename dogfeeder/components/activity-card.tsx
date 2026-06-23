@@ -1,4 +1,4 @@
-import { Bone } from "lucide-react";
+import { Bone, X } from "lucide-react";
 
 import {
   Card,
@@ -31,34 +31,53 @@ export function ActivityCard({ eventos }: { eventos: Evento[] }) {
           </p>
         ) : (
           <ul className="flex flex-col gap-1">
-            {eventos.map((e) => (
-              <li
-                key={e.id}
-                className="flex items-center justify-between gap-3 py-2"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="flex size-9 items-center justify-center rounded-lg bg-primary/15 text-primary">
-                    <Bone className="size-4" aria-hidden />
+            {eventos.map((e) => {
+              const saltada = e.status === "missed";
+              return (
+                <li
+                  key={e.id}
+                  className="flex items-center justify-between gap-3 py-2"
+                >
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={
+                        "flex size-9 items-center justify-center rounded-lg " +
+                        (saltada
+                          ? "bg-warning/15 text-warning"
+                          : "bg-primary/15 text-primary")
+                      }
+                    >
+                      {saltada ? (
+                        <X className="size-4" aria-hidden />
+                      ) : (
+                        <Bone className="size-4" aria-hidden />
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium">
+                        {saltada ? (
+                          "Se saltó la comida"
+                        ) : (
+                          <>
+                            Sirvió{" "}
+                            <span className="tabular-nums">{e.gramos} g</span>
+                          </>
+                        )}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {e.label ? `${e.label} · ` : ""}
+                        {hora(e.timestamp)}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm font-medium">
-                      Sirvió{" "}
-                      <span className="tabular-nums">
-                        {Math.round(e.gramos)} g
-                      </span>
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {hora(e.timestamp)}
-                    </p>
-                  </div>
-                </div>
-                {e.origen === "demo" && (
-                  <Badge variant="muted" className="text-[10px]">
-                    demo
-                  </Badge>
-                )}
-              </li>
-            ))}
+                  {e.origen === "manual" && (
+                    <Badge variant="muted" className="text-[10px]">
+                      manual
+                    </Badge>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </CardContent>
