@@ -81,7 +81,7 @@ export function FeedCard({
                 {online ? `${Math.round(peso)} / ${pesoObjetivo} g` : "Sirviendo"}
               </span>
             </div>
-            <Progress value={pct} indeterminate={!online} />
+            <Progress value={!online ? null : pct} />
           </div>
         )}
 
