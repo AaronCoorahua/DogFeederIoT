@@ -29,9 +29,10 @@ export interface HeartbeatOut {
   alimentar: boolean;
   abrir?: boolean;
   cerrar?: boolean;
-  _t?: string;    // hora Lima "HH:MM" para debug en Serial Monitor
-  _near?: boolean; // si el server consideró al perro cerca
-  _next?: string; // próxima comida programada "HH:MM" (o "ninguna")
+  _t?: string;      // hora Lima "HH:MM" para debug en Serial Monitor
+  _near?: boolean;  // si el server consideró al perro cerca
+  _next?: string;   // próxima comida programada "HH:MM" (o "ninguna")
+  _alarma?: boolean; // slot vencido pendiente pero perro no cerca → llamar al perro
 }
 
 type Admin = ReturnType<typeof createAdminClient>;
@@ -192,7 +193,9 @@ export async function heartbeat(
   }
 
   const pesoObjetivo = chosen?.grams_target ?? schedules?.[0]?.grams_target ?? 0;
-  return { pesoObjetivo, alimentar: false, _t, _near: near, _next };
+  // _alarma: hay slot pendiente pero el perro no llegó → el buzzer lo llama
+  const _alarma = chosen !== null && !near;
+  return { pesoObjetivo, alimentar: false, _t, _near: near, _next, _alarma };
 }
 
 // El ESP32 termino de dispensar (peso objetivo o cierre manual) y reporta gramos.
