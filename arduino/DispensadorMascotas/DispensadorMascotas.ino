@@ -10,16 +10,16 @@
 #include <WiFiClientSecure.h>
 
 // ---- Credenciales WiFi ----
-const char* WIFI_SSID     = "****";
-const char* WIFI_PASSWORD = "****";
+const char* WIFI_SSID     = "Iphone Aaron";
+const char* WIFI_PASSWORD = "aaron123";
 
 // ---- URL base de la app (SIN barra final, SIN ruta) ----
 // Produccion (la nube): https://.vercel.app
 // Pruebas en tu PC:      http://192.168.x.x:3000   (detecta http/https solo)
-const char* API_BASE = "*****";
+const char* API_BASE = "https://dog-feeder-io-t.vercel.app";
 
 // ---- Clave compartida (igual a DEVICE_API_KEY en Next.js) ----
-const char* API_KEY = "*****";
+const char* API_KEY = "123456789";
 
 // ======================================================
 // PINES
@@ -33,6 +33,9 @@ const int HX711_sck  = 5;
 
 const int TRIG_PIN = 27;
 const int ECHO_PIN = 26;
+
+// ---- Buzzer (igual pin que DispensadorFirme) ----
+const int BUZZER = 21;  // GPIO 21
 
 // ======================================================
 // PARAMETROS
@@ -68,6 +71,9 @@ void setup() {
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
 
+  pinMode(BUZZER, OUTPUT);
+  digitalWrite(BUZZER, LOW);
+
   LoadCell.begin();
   LoadCell.start(2000, true); // estabiliza 2s y hace tare
   if (LoadCell.getTareTimeoutFlag()) {
@@ -97,25 +103,95 @@ void loop() {
   if (millis() - ultimoHeartbeat >= HEARTBEAT_MS) {
     ultimoHeartbeat = millis();
 
+    // Estado en vivo para el Serial Monitor
+    Serial.print("Dist: ");
+    Serial.print(distancia, 1);
+    Serial.print(" cm  |  Peso: ");
+    Serial.print(pesoReal, 1);
+    Serial.print(" g  |  Perro: ");
+    Serial.print(perroCerca ? "cerca" : "lejos");
+
     String resp = enviarHeartbeat(perroCerca, pesoReal, distancia);
     if (resp.length() > 0) {
       actualizarObjetivo(resp);
+      imprimirEstado(resp, perroCerca);
 
       // Servo manual (boton "Servir (forzar)" / "Cerrar"). Tiene prioridad.
+      // El manual NO activa el buzzer: no es hora de comer, es una servida forzada.
       if (!alimentando && !servoManualAbierto && resp.indexOf("\"abrir\":true") >= 0) {
+        Serial.println("  ->  ABRIR manual");
         abrirManual();
       } else if (servoManualAbierto && resp.indexOf("\"cerrar\":true") >= 0) {
+        Serial.println("  ->  CERRAR manual");
         cerrarManual();
       }
-      // Alimentacion por peso (horario o "Alimentar ahora").
+      // Alimentacion programada: el server dice que es la hora. Primero suena el buzzer.
       else if (!alimentando && !servoManualAbierto &&
                resp.indexOf("\"alimentar\":true") >= 0) {
+        Serial.println("  ->  HORA DE COMER");
+        sonarHoraDeComida();
         alimentar();
+      } else {
+        Serial.print("  ->  en espera");
+        if (!perroCerca) Serial.print(" (perro no cerca)");
+        Serial.println();
       }
+    } else {
+      Serial.println("  ->  sin respuesta del server");
     }
   }
 
   delay(50);
+}
+
+// ======================================================
+// ESTADO: parsea el JSON del server e imprime cada campo
+// ======================================================
+bool extraerBool(const String& json, const char* key) {
+  String search = String("\"") + key + "\":true";
+  return json.indexOf(search) >= 0;
+}
+String extraerString(const String& json, const char* key) {
+  String search = String("\"") + key + "\":\"";
+  int i = json.indexOf(search);
+  if (i < 0) return "";
+  int start = i + search.length();
+  int end = json.indexOf("\"", start);
+  return (end > start) ? json.substring(start, end) : "";
+}
+
+void imprimirEstado(const String& resp, bool perroCercaLocal) {
+  bool   alimentar  = extraerBool(resp, "alimentar");
+  bool   nearServer = extraerBool(resp, "_near");
+  bool   abrir      = extraerBool(resp, "abrir");
+  bool   cerrar     = extraerBool(resp, "cerrar");
+  String horaLima   = extraerString(resp, "_t");
+  String proxComida = extraerString(resp, "_next");
+
+  Serial.println("------------------------------");
+  Serial.print("  Hora servidor: "); Serial.println(horaLima.length() ? horaLima : "?");
+  Serial.print("  Prox. comida : "); Serial.println(proxComida.length() ? proxComida : "?");
+  Serial.print("  Perro cerca  : "); Serial.print(perroCercaLocal ? "SI" : "NO");
+  Serial.print("  (server: "); Serial.print(nearServer ? "SI" : "NO"); Serial.println(")");
+  Serial.print("  Hora comer   : "); Serial.println(alimentar ? "SI  <<< ALIMENTAR" : "NO");
+  Serial.print("  Peso obj.    : "); Serial.print(pesoObjetivo, 0); Serial.println(" g");
+  if (abrir)  Serial.println("  Orden manual : ABRIR");
+  if (cerrar) Serial.println("  Orden manual : CERRAR");
+  Serial.println("------------------------------");
+}
+
+// ======================================================
+// BUZZER: avisa que es hora de comer (3 pitidos cortos)
+//   Se llama ANTES de abrir la compuerta, no durante la servida.
+// ======================================================
+void sonarHoraDeComida() {
+  Serial.println("Hora de comer -> buzzer");
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(BUZZER, HIGH);
+    delay(180);
+    digitalWrite(BUZZER, LOW);
+    delay(120);
+  }
 }
 
 // ======================================================
@@ -169,6 +245,7 @@ void alimentar() {
 // SERVO MANUAL: abrir y mantener / cerrar bajo demanda
 //   No bloquea: la compuerta queda abierta y el loop sigue
 //   reportando el peso en vivo hasta que llegue "cerrar".
+//   No suena el buzzer: no es un horario programado.
 // ======================================================
 void abrirManual() {
   Serial.println("Comando ABRIR (manual) -> compuerta abierta");

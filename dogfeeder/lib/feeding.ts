@@ -27,8 +27,11 @@ export interface HeartbeatIn {
 export interface HeartbeatOut {
   pesoObjetivo: number;
   alimentar: boolean;
-  abrir?: boolean; // mantener compuerta abierta (servo manual)
-  cerrar?: boolean; // cerrar compuerta ahora
+  abrir?: boolean;
+  cerrar?: boolean;
+  _t?: string;    // hora Lima "HH:MM" para debug en Serial Monitor
+  _near?: boolean; // si el server consideró al perro cerca
+  _next?: string; // próxima comida programada "HH:MM" (o "ninguna")
 }
 
 type Admin = ReturnType<typeof createAdminClient>;
@@ -61,6 +64,7 @@ export async function heartbeat(
 
   const now = new Date();
   const { dateStr, minutes, dow } = localParts(now, device.timezone);
+  const _t = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 
   // 1) Telemetria viva.
   await admin.from("device_state").upsert(
@@ -82,10 +86,10 @@ export async function heartbeat(
     .eq("device_id", device.id)
     .maybeSingle();
   const orden = st?.manual_orden as string | null | undefined;
-  if (orden === "abrir") return { pesoObjetivo: 0, alimentar: false, abrir: true };
-  if (orden === "cerrar") return { pesoObjetivo: 0, alimentar: false, cerrar: true };
+  if (orden === "abrir") return { pesoObjetivo: 0, alimentar: false, abrir: true, _t };
+  if (orden === "cerrar") return { pesoObjetivo: 0, alimentar: false, cerrar: true, _t };
 
-  if (!device.dog_id) return { pesoObjetivo: 0, alimentar: false };
+  if (!device.dog_id) return { pesoObjetivo: 0, alimentar: false, _t };
 
   const near =
     !!data.perroCerca ||
@@ -104,7 +108,7 @@ export async function heartbeat(
   if (active) {
     const ageMs = now.getTime() - new Date(active.commanded_at).getTime();
     if (ageMs <= COMMAND_TIMEOUT_MS) {
-      return { pesoObjetivo: active.grams_target, alimentar: true };
+      return { pesoObjetivo: active.grams_target, alimentar: true, _t, _near: near };
     }
     // Failsafe: el device nunca confirmo -> liberar.
     await admin.from("servings").update({ status: "failed" }).eq("id", active.id);
@@ -148,6 +152,18 @@ export async function heartbeat(
     break; // el mas temprano sin servir
   }
 
+  // Próxima comida del día (la más temprana aún por llegar hoy).
+  const _next =
+    (schedules ?? [])
+      .filter(
+        (s) =>
+          Array.isArray(s.days_of_week) &&
+          s.days_of_week.includes(dow) &&
+          hhmmToMinutes(s.feed_time) > minutes
+      )
+      .sort((a, b) => hhmmToMinutes(a.feed_time) - hhmmToMinutes(b.feed_time))[0]
+      ?.feed_time?.slice(0, 5) ?? "ninguna";
+
   if (chosen && near) {
     // Reclamo atomico: el indice unico (schedule_id, local_date) evita doble servido.
     const { data: inserted, error } = await admin
@@ -170,13 +186,13 @@ export async function heartbeat(
         .from("device_state")
         .update({ feed_phase: "feeding", active_serving_id: inserted.id })
         .eq("device_id", device.id);
-      return { pesoObjetivo: chosen.grams_target, alimentar: true };
+      return { pesoObjetivo: chosen.grams_target, alimentar: true, _t, _near: near, _next };
     }
     // Conflicto (otro latido lo tomo) -> no alimentar.
   }
 
   const pesoObjetivo = chosen?.grams_target ?? schedules?.[0]?.grams_target ?? 0;
-  return { pesoObjetivo, alimentar: false };
+  return { pesoObjetivo, alimentar: false, _t, _near: near, _next };
 }
 
 // El ESP32 termino de dispensar (peso objetivo o cierre manual) y reporta gramos.
